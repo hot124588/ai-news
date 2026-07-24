@@ -518,8 +518,8 @@ def build_html(items):
 
     timeline_html = ""
     sessions = [
-        ("afternoon", "12:00 - 24:00", lambda tl: tl < "12:00"),
-        ("morning", "00:00 - 12:00", lambda tl: tl >= "12:00"),
+        ("afternoon", "12:00 - 24:00", lambda tl: tl >= "12:00"),
+        ("morning", "00:00 - 12:00", lambda tl: tl < "12:00"),
     ]
     for sid, slabel, check in sessions:
         sitems = [it for it in items if check(it["time_label"]) and it["url"] not in rising_urls]
