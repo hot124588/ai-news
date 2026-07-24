@@ -144,7 +144,6 @@ def main():
         except Exception as e:
             print("  " + name + ": FAIL - " + str(e))
 
-    # dedup
     seen = set()
     unique = []
     for x in all_items:
@@ -153,7 +152,6 @@ def main():
             unique.append(x)
 
     print("Total: " + str(len(unique)))
-
     h = build_html(unique)
     
     docs_dir = "docs"
@@ -164,8 +162,24 @@ def main():
         f.write(h)
     with open(os.path.join(docs_dir, TODAY + ".html"), "w", encoding="utf-8") as f:
         f.write(h)
-
+    
     print("Done! https://hot124588.github.io/ai-news/")
+
+    # Auto-commit if running in GitHub Actions
+    gh_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("INPUT_GITHUB_TOKEN")
+    if gh_token:
+        import subprocess
+        repo_url = "https://x-access-token:" + gh_token + "@github.com/hot124588/ai-news.git"
+        subprocess.run(["git", "config", "user.name", "github-actions"], capture_output=True)
+        subprocess.run(["git", "config", "user.email", "actions@github.com"], capture_output=True)
+        subprocess.run(["git", "add", "docs/"], capture_output=True)
+        r = subprocess.run(["git", "diff", "--staged", "--quiet"], capture_output=True)
+        if r.returncode != 0:
+            subprocess.run(["git", "commit", "-m", "auto update"], capture_output=True)
+            subprocess.run(["git", "push", repo_url, "HEAD:main"], capture_output=True)
+            print("  Committed and pushed!")
+        else:
+            print("  No changes to commit")
 
 
 if __name__ == "__main__":
