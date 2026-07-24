@@ -518,8 +518,8 @@ def build_html(items):
 
     timeline_html = ""
     sessions = [
-        ("morning", "00:00 - 12:00", lambda tl: tl < "12:00"),
-        ("afternoon", "12:00 - 24:00", lambda tl: tl >= "12:00"),
+        ("morning", "12:00 - 24:00", lambda tl: tl < "12:00"),
+        ("afternoon", "00:00 - 12:00", lambda tl: tl >= "12:00"),
     ]
     for sid, slabel, check in sessions:
         sitems = [it for it in items if check(it["time_label"]) and it["url"] not in rising_urls]
@@ -646,7 +646,7 @@ a{{color:var(--accent2);text-decoration:none}} a:hover{{text-decoration:underlin
   <span class="stat-item"><span class="stat-dot" style="background:var(--paper)"></span> 论文</span>
   <span class="stat-item">共 {len(items)} 条动态</span>
 </div>
-<main id="timeline">{rising_html}{timeline_html}</main>
+<main id="timeline">{timeline_html}{rising_html}</main>
 <footer class="footer">
   <p>🤖 每日自动采集 · 数据来源: {sources_note}</p>
   <p>🕐 最后更新: {NOW.strftime('%H:%M')} CST · 仅收录近 {FRESH_HOURS}h 内资讯 · 由 AI 自动整理</p>
