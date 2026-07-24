@@ -2,7 +2,7 @@ name: AI新闻时间线
 on:
   schedule:
     # UTC 0/6/12/18 = 北京时间 8:00 / 14:00 / 20:00 / 02:00 (每天 4 次, 保持新闻新鲜)
-    - cron: '0 0,6,12,18 * * *'
+    - cron: '0 * * * *'
   push:
     branches: [ main ]
   workflow_dispatch:
