@@ -119,17 +119,23 @@ def time_label(dt):
     return dt.strftime("%H:%M")
 
 
-def make_item(category, source, dt, title_en, url, score=75):
+def make_item(category, source, dt, title_en, url, score=75, title_cn=None):
     """Create a unified news item dict."""
-    title_cn = translate(title_en)
-    summary = summarize(title_cn)
+    if title_cn:
+        cn = title_cn
+    elif category in ("githubTrending",):
+        # Don't translate GitHub repo names (proper nouns)
+        cn = title_en
+    else:
+        cn = translate(title_en)
+    summary = summarize(cn)
     return {
         "category": category,
         "source": source,
         "time": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "time_label": time_label(dt),
         "title_en": title_en[:200],
-        "title_cn": title_cn[:200],
+        "title_cn": cn[:200],
         "summary_cn": summary,
         "url": url,
         "score": score
