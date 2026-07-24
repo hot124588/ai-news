@@ -1,6 +1,9 @@
-name: AI新闻日报
+name: AI新闻时间线
 on:
+  schedule:
+    - cron: '0 0,8 * * *'  # UTC 0:00 / 8:00 = 北京时间 8:00 / 16:00
   push:
+    branches: [ main ]
   workflow_dispatch:
 permissions:
   contents: read
