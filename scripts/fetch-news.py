@@ -195,7 +195,7 @@ def parse_rss_items(data):
     return out
 
 
-def make_item(category, source, dt, title_en, url, score=75, summary_en=None):
+def make_item(category, source, dt, title_en, url, score=75, summary_en=None, stars=None, rising=False):
     cn = title_en if not needs_translate(title_en) else translate(title_en)
     summary = ""
     if summary_en:
@@ -216,6 +216,8 @@ def make_item(category, source, dt, title_en, url, score=75, summary_en=None):
         "summary_cn": summary[:200],
         "url": url,
         "score": score,
+        "stars": stars,
+        "rising": rising,
     }
 
 
@@ -413,12 +415,106 @@ def fetch_github_trending():
     return res
 
 
+def fetch_github_rising():
+    """新星榜: 抓取最近 7 天上架、star 已快速攀升的 AI 仓库 (created:>7d & sort=stars).
+    这正是「才上架、但热度马上就很高、AI 相关」的项目。"""
+    res = []
+    seen = set()
+    since = (NOW_UTC - timedelta(days=7)).strftime("%Y-%m-%d")
+    queries = [("ai", "stars"), ("llm", "stars"), ("agent", "stars"),
+               ("ai-agent", "stars"), ("multimodal", "stars"), ("gpt", "stars")]
+    headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "ai-news-bot"}
+    for query, sort in queries:
+        try:
+            url = (f"https://api.github.com/search/repositories?q={query}"
+                   f"+created:>{since}&sort={sort}&order=desc&per_page=12")
+            data = fet(url, headers=headers)
+            if not data or "items" not in data:
+                continue
+            for repo in data["items"]:
+                name = repo.get("full_name", "")
+                if name in seen:
+                    continue
+                seen.add(name)
+                desc = repo.get("description", "") or ""
+                full = f"{name} {desc}"
+                if not (is_ai(full) or is_ai(name)):
+                    continue
+                stars = repo.get("stargazers_count", 0)
+                created = repo.get("created_at")
+                dt = NOW_UTC
+                if created:
+                    try:
+                        dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+                sc = (95 if stars >= 5000 else 90 if stars >= 2000 else
+                      85 if stars >= 800 else 80 if stars >= 300 else 75)
+                res.append(make_item("githubTrending", "GitHub 新星", dt,
+                                     f"{name} ({stars:,}⭐)", repo.get("html_url", ""),
+                                     sc, desc, stars=stars, rising=True))
+        except Exception as e:
+            print(f"  GitHub rising '{query}' error: {e}")
+    return res
+
+
 # ===================== HTML 生成 =====================
 def build_html(items):
     items.sort(key=lambda x: x["time"], reverse=True)
+    # 计算"爆发力" = 单位时间热度 (stars / 上架小时数); 无 stars 用 score 代理
+    for it in items:
+        stars = it.get("stars") or 0
+        heat = stars if stars else it["score"] * 30
+        try:
+            dt = datetime.fromisoformat(it["time"].replace("Z", "+00:00"))
+            age_h = max(2, (NOW_UTC - dt).total_seconds() / 3600)
+        except Exception:
+            age_h = 48
+        it["burst"] = round(heat / age_h, 2)
     cat_counts = {}
     for it in items:
         cat_counts[it["category"]] = cat_counts.get(it["category"], 0) + 1
+
+    # ---- 新星榜: 才上架就爆的 AI 项目, 按"单位时间热度(上架至今涨星速度)"降序 ----
+    rising = [it for it in items if it.get("rising")]
+    rising.sort(key=lambda x: x.get("burst", 0), reverse=True)
+    rising_urls = {it["url"] for it in rising}
+    rising_html = ""
+    if rising:
+        cards = ""
+        for it in rising:
+            c = it["category"]
+            colors = {"news": "#6c63ff", "githubTrending": "#ff8c42", "paper": "#ff6b9d"}
+            labels = {"news": "NEWS", "githubTrending": "GITHUB", "paper": "PAPER"}
+            cat_color = colors.get(c, "#6c63ff")
+            cat_label = labels.get(c, c.upper())
+            age_h = max(2, (NOW_UTC - datetime.fromisoformat(it["time"].replace("Z", "+00:00"))).total_seconds() / 3600) if it.get("time") else 48
+            per = it["stars"] / age_h if it.get("stars") else 0
+            rate = f"{per:.0f}⭐/时" if age_h < 24 else f"{per*24:.0f}⭐/天"
+            cards += f"""
+            <div class="card rising-card" data-category="{c}" data-source="{html.escape(it['source'].lower())}"
+                 data-title-en="{html.escape(it['title_en'].lower())}"
+                 data-title-cn="{html.escape(it['title_cn'].lower())}">
+                <div class="card-time">{html.escape(it['time_label'])}<br><span class="rel">{html.escape(it.get('time_rel',''))}</span></div>
+                <div class="card-body">
+                    <div class="card-meta">
+                        <span class="cat-tag" style="background:{cat_color}22;color:{cat_color};border:1px solid {cat_color}44">[{cat_label}]</span>
+                        <span class="card-source">{html.escape(it['source'])} <span class="fresh">🔥新爆</span></span>
+                        <span class="card-score" title="单位时间热度(上架至今平均涨星速度)">{html.escape(rate)}</span>
+                    </div>
+                    <div class="card-title">{html.escape(it['title_cn'])}</div>
+                    <div class="card-title-en">{html.escape(it['title_en'])}</div>
+                    <div class="card-summary">{html.escape(it['summary_cn'])}</div>
+                    <a href="{html.escape(it['url'])}" class="card-link" target="_blank" rel="noopener">[UPLINK] → 查看原文</a>
+                </div>
+            </div>"""
+        rising_html = f"""
+        <div class="session rising-session" id="session-rising">
+            <div class="session-header"><div class="session-line"></div>
+                <span class="session-label">🔥 新星榜 · 才上架就爆的 AI 项目（按单位时间热度排序）</span>
+                <div class="session-line"></div></div>
+            <div class="cards-container">{cards}</div>
+        </div>"""
 
     timeline_html = ""
     sessions = [
@@ -426,7 +522,7 @@ def build_html(items):
         ("afternoon", "12:00 - 24:00", lambda tl: tl >= "12:00"),
     ]
     for sid, slabel, check in sessions:
-        sitems = [it for it in items if check(it["time_label"])]
+        sitems = [it for it in items if check(it["time_label"]) and it["url"] not in rising_urls]
         if not sitems:
             continue
         cards = ""
@@ -550,7 +646,7 @@ a{{color:var(--accent2);text-decoration:none}} a:hover{{text-decoration:underlin
   <span class="stat-item"><span class="stat-dot" style="background:var(--paper)"></span> 论文</span>
   <span class="stat-item">共 {len(items)} 条动态</span>
 </div>
-<main id="timeline">{timeline_html}</main>
+<main id="timeline">{rising_html}{timeline_html}</main>
 <footer class="footer">
   <p>🤖 每日自动采集 · 数据来源: {sources_note}</p>
   <p>🕐 最后更新: {NOW.strftime('%H:%M')} CST · 仅收录近 {FRESH_HOURS}h 内资讯 · 由 AI 自动整理</p>
@@ -613,6 +709,7 @@ def main():
         ("HF Papers", fetch_hf_papers),
         ("ArXiv", fetch_arxiv),
         ("RSS Feeds", fetch_rss),
+        ("GitHub 新星", fetch_github_rising),
         ("GitHub Trending", fetch_github_trending),
     ]
     all_items = []
@@ -630,9 +727,11 @@ def main():
     for x in all_items:
         uk = x["url"]
         tk = re.sub(r'\W+', '', (x["title_cn"] + x["title_en"]).lower())
-        if uk in seen_u or tk in seen_t:
-            continue
-        seen_u.add(uk); seen_t.add(tk); unique.append(x)
+        if not x.get("rising"):
+            if uk in seen_u or tk in seen_t:
+                continue
+            seen_u.add(uk); seen_t.add(tk)
+        unique.append(x)
 
     print(f"\n{'='*40}\nTotal unique: {len(unique)}")
     cats = {}
