@@ -1,17 +1,25 @@
 name: AI新闻时间线
+
+# 修复点：从「每小时」降为「每 6 小时」
+# 原因：原 hourly 把 GitHub Search API(无 token 限流 10次/小时) 瞬间打满，
+#       后续抓取全部 403/超时 → 页面只剩旧数据，造成「新闻不更新」假象。
 on:
   schedule:
-    - cron: '0 * * * *'   # 每小时整点(UTC)运行一次
+    - cron: '30 */6 * * *'   # 每 6 小时第 30 分运行(UTC)，避开整点高峰
   push:
     branches: [ main ]
   workflow_dispatch:
+
+# 修复点：保留 pages 部署所需权限；contents 只需 read（生成器写 docs/ 后由 Pages artifact 发布，不再 git push）
 permissions:
   contents: read
   pages: write
   id-token: write
+
 concurrency:
   group: pages
   cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,7 +31,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python scripts/fetch-news.py
+      - name: 生成新闻页
+        run: python scripts/fetch-news.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/configure-pages@v5
