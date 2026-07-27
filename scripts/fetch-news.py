@@ -10,7 +10,7 @@
 输出: docs/index.html, docs/<date>.html, docs/data.json
 特性: 48h 新鲜度过滤, 真实摘要, 相对时间, 自动翻译(失败兜底), 去重
 """
-import json, os, re, html, ssl
+import json, os, re, html, ssl, sys, time
 import urllib.request, urllib.parse
 from datetime import datetime, timezone, timedelta
 import xml.etree.ElementTree as ET
@@ -29,8 +29,9 @@ TODAY = NOW.strftime("%Y-%m-%d")
 TDISP = NOW.strftime("%Y年%m月%d日")
 NOW_UTC = datetime.now(timezone.utc)
 
-FRESH_HOURS = 48                      # 新闻类只保留近 48 小时
+FRESH_HOURS = 168                     # 展示近 7 天（避免两次抓取间页面空白）
 FRESH_CUT = NOW_UTC - timedelta(hours=FRESH_HOURS)
+CACHE_DAYS = 30                        # 缓存保留近 30 天历史，抓取失败也能显示旧数据
 
 # ---- AI 关键词 (标题/摘要命中即保留) ----
 AI_KW = [
@@ -55,18 +56,24 @@ _UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.
 
 
 # ===================== 通用工具 =====================
-def fet(url, headers=None, timeout=20, raw=False):
-    try:
-        h = dict(_UA)
-        if headers:
-            h.update(headers)
-        req = urllib.request.Request(url, headers=h)
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as f:
-            data = f.read()
-            return data if raw else json.loads(data.decode("utf-8", "replace"))
-    except Exception as e:
-        print(f"  FETCH FAIL [{url[:70]}]: {e}")
-        return None
+def fet(url, headers=None, timeout=20, raw=False, retries=3):
+    last_err = None
+    for attempt in range(retries):
+        try:
+            h = dict(_UA)
+            if headers:
+                h.update(headers)
+            req = urllib.request.Request(url, headers=h)
+            with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as f:
+                data = f.read()
+                return data if raw else json.loads(data.decode("utf-8", "replace"))
+        except Exception as e:
+            last_err = e
+            # 失败后短暂退避再试, 应对偶发 SSL EOF / 超时
+            if attempt < retries - 1:
+                time.sleep(2 + attempt * 2)
+    print(f"  FETCH FAIL [{url[:70]}]: {last_err}")
+    return None
 
 
 def translate(text):
@@ -384,8 +391,12 @@ def fetch_github_trending():
         try:
             url = (f"https://api.github.com/search/repositories?q={query}"
                    f"&sort={sort}&order=desc&per_page=12")
-            data = fet(url, headers={"Accept": "application/vnd.github.v3+json",
-                                     "User-Agent": "ai-news-bot"})
+            gh_headers = {"Accept": "application/vnd.github.v3+json",
+                         "User-Agent": "ai-news-bot"}
+            tok = os.environ.get("GITHUB_TOKEN")
+            if tok:
+                gh_headers["Authorization"] = f"Bearer {tok}"
+            data = fet(url, headers=gh_headers)
             if not data or "items" not in data:
                 continue
             for repo in data["items"]:
@@ -732,6 +743,41 @@ def main():
                 continue
             seen_u.add(uk); seen_t.add(tk)
         unique.append(x)
+
+    # ---- 读取已提交的缓存(上次成功数据): 失败时兜底, 平时累积历史 ----
+    cache_path = os.path.join(OUT, "data.json")
+    cached = []
+    try:
+        if os.path.exists(cache_path):
+            cached = json.load(open(cache_path, encoding="utf-8"))
+            print(f"  📦 载入缓存: {len(cached)} 条")
+    except Exception:
+        cached = []
+
+    # 与缓存合并: 本次抓到的新数据优先, 旧数据补全历史(近 CACHE_DAYS 天)
+    cutoff = NOW_UTC - timedelta(days=CACHE_DAYS)
+    by_url = {}
+    for x in unique + cached:
+        u = x.get("url")
+        if not u:
+            continue
+        if u not in by_url:          # 本次优先, 缓存补缺
+            by_url[u] = x
+    merged = []
+    for x in by_url.values():
+        t = x.get("time")
+        try:
+            dt = datetime.fromisoformat(t.replace("Z", "+00:00")) if t else NOW_UTC
+        except Exception:
+            dt = NOW_UTC
+        if dt >= cutoff:
+            merged.append(x)
+    unique = merged
+
+    # 抓全失败且无缓存 → 标记失败(让 Actions 变红, 不再假绿)
+    if not all_items and not cached:
+        print(f"\n❌ 所有数据源抓取失败且无缓存, 退出码 1")
+        sys.exit(1)
 
     print(f"\n{'='*40}\nTotal unique: {len(unique)}")
     cats = {}
